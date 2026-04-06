@@ -9,6 +9,11 @@
       "import": "./dist/index.mjs"
     }
   },
+  "files": [
+    "dist",
+    "docs",
+    "examples"
+  ],
   "scripts": {
     "build": "tsdown",
     "lint": "oxlint",

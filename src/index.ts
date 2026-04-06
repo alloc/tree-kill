@@ -5,11 +5,47 @@ const execAsync = promisify(exec)
 
 type KillSignal = number | NodeJS.Signals
 
+/**
+ * Minimal process handle that {@link treeKill} can operate on.
+ *
+ * A numeric {@link ProcessLike.pid | pid} enables descendant traversal.
+ * When it is missing or not numeric, {@link treeKill} falls back to a direct
+ * call to {@link ProcessLike.kill | kill()}.
+ */
 export interface ProcessLike {
+  /**
+   * Operating system pid for the root process.
+   */
   pid?: number
+
+  /**
+   * Sends a signal to the root process.
+   */
   kill: (signal?: KillSignal) => boolean
 }
 
+/**
+ * Kills a process and, when possible, every descendant in its process tree.
+ *
+ * @param proc Process handle for the root process.
+ * @param signal Signal to deliver. Leaving it undefined uses the platform
+ * default, which is usually `SIGTERM`.
+ * @returns A promise that resolves after the tree traversal and kill attempts
+ * complete.
+ * @remarks This rewrite differs from the original `tree-kill` package by
+ * accepting a `ChildProcess`-like object and returning a promise instead of
+ * using a pid-first callback API.
+ * @throws Propagates non-`ESRCH` errors from `process.kill()` or from the
+ * fallback `proc.kill()` call.
+ * @example
+ * ```ts
+ * import { spawn } from "node:child_process"
+ * import treeKill from "@alloc/tree-kill"
+ *
+ * const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"])
+ * await treeKill(child, "SIGTERM")
+ * ```
+ */
 export default async function treeKill(proc: ProcessLike, signal?: KillSignal): Promise<void> {
   if (typeof proc.pid !== "number" || Number.isNaN(proc.pid)) {
     proc.kill(signal)

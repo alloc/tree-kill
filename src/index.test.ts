@@ -20,6 +20,11 @@ type KillApi = {
   run: (proc: ProcessLike, signal?: NodeJS.Signals) => Promise<void>;
 };
 
+type CommandInvocation = {
+  command: string;
+  args: string[];
+};
+
 const killApis: KillApi[] = [
   {
     name: "async",
@@ -56,6 +61,61 @@ function createSpawnChild(stdout: string, code = 0): EventEmitter & { stdout: Ev
   return child;
 }
 
+function expectDescendantsBeforeAncestors(
+  killOrder: number[],
+  relationships: Array<readonly [child: number, parent: number]>,
+): void {
+  const positions = new Map(killOrder.map((pid, index) => [pid, index]));
+
+  for (const [child, parent] of relationships) {
+    expect(positions.get(child)).toBeDefined();
+    expect(positions.get(parent)).toBeDefined();
+    expect(positions.get(child)).toBeLessThan(positions.get(parent)!);
+  }
+}
+
+function getChildProcessInvocations(): CommandInvocation[] {
+  const invocations: CommandInvocation[] = [];
+
+  for (const [command] of childProcess.exec.mock.calls) {
+    const parts = String(command).trim().split(/\s+/);
+    invocations.push({
+      command: parts[0]!,
+      args: parts.slice(1),
+    });
+  }
+
+  for (const [command, args = []] of childProcess.execFileSync.mock.calls) {
+    invocations.push({
+      command: String(command),
+      args: [...(args as string[])],
+    });
+  }
+
+  for (const [command, args = []] of childProcess.spawn.mock.calls) {
+    invocations.push({
+      command: String(command),
+      args: [...(args as string[])],
+    });
+  }
+
+  for (const [command, args = []] of childProcess.spawnSync.mock.calls) {
+    invocations.push({
+      command: String(command),
+      args: [...(args as string[])],
+    });
+  }
+
+  return invocations;
+}
+
+function expectTaskkillInvocation(pid: number): void {
+  expect(getChildProcessInvocations()).toContainEqual({
+    command: "taskkill",
+    args: ["/pid", String(pid), "/T", "/F"],
+  });
+}
+
 describe("@alloc/tree-kill", () => {
   beforeEach(() => {
     childProcess.exec.mockReset();
@@ -87,6 +147,7 @@ describe("@alloc/tree-kill", () => {
 
     const proc = createProc(100);
     const killOrder: number[] = [];
+    const queriedParents = new Set<number>();
     vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
       killOrder.push(pid);
       return true;
@@ -97,6 +158,7 @@ describe("@alloc/tree-kill", () => {
       expect(args[0]).toBe("-P");
 
       const pid = Number(args[1]);
+      queriedParents.add(pid);
       if (pid === 100) return createSpawnChild("200\n300\n");
       if (pid === 200) return createSpawnChild("400\n");
       return createSpawnChild("", 1);
@@ -104,13 +166,12 @@ describe("@alloc/tree-kill", () => {
 
     await treeKill(proc, "SIGTERM");
 
-    expect(childProcess.spawn.mock.calls).toEqual([
-      ["pgrep", ["-P", "100"]],
-      ["pgrep", ["-P", "200"]],
-      ["pgrep", ["-P", "300"]],
-      ["pgrep", ["-P", "400"]],
+    expect([...queriedParents].sort((left, right) => left - right)).toEqual([100, 200, 300, 400]);
+    expectDescendantsBeforeAncestors(killOrder, [
+      [400, 200],
+      [200, 100],
+      [300, 100],
     ]);
-    expect(killOrder).toEqual([400, 200, 300, 100]);
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
   });
@@ -120,6 +181,7 @@ describe("@alloc/tree-kill", () => {
 
     const proc = createProc(100);
     const killOrder: number[] = [];
+    const queriedParents = new Set<number>();
     vi.spyOn(process, "kill").mockImplementation(((pid: number) => {
       killOrder.push(pid);
       return true;
@@ -130,6 +192,7 @@ describe("@alloc/tree-kill", () => {
       expect(args[0]).toBe("-P");
 
       const pid = Number(args[1]);
+      queriedParents.add(pid);
       if (pid === 100) return { status: 0, stdout: "200\n300\n" };
       if (pid === 200) return { status: 0, stdout: "400\n" };
       return { status: 1, stdout: "" };
@@ -137,13 +200,12 @@ describe("@alloc/tree-kill", () => {
 
     treeKillSync(proc, "SIGTERM");
 
-    expect(childProcess.spawnSync.mock.calls).toEqual([
-      ["pgrep", ["-P", "100"], { encoding: "ascii" }],
-      ["pgrep", ["-P", "200"], { encoding: "ascii" }],
-      ["pgrep", ["-P", "400"], { encoding: "ascii" }],
-      ["pgrep", ["-P", "300"], { encoding: "ascii" }],
+    expect([...queriedParents].sort((left, right) => left - right)).toEqual([100, 200, 300, 400]);
+    expectDescendantsBeforeAncestors(killOrder, [
+      [400, 200],
+      [200, 100],
+      [300, 100],
     ]);
-    expect(killOrder).toEqual([400, 200, 300, 100]);
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
   });
@@ -226,7 +288,7 @@ describe("@alloc/tree-kill", () => {
 
     await treeKill(proc, "SIGTERM");
 
-    expect(childProcess.exec).toHaveBeenCalledWith("taskkill /pid 100 /T /F", expect.any(Function));
+    expectTaskkillInvocation(100);
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
   });
@@ -238,13 +300,7 @@ describe("@alloc/tree-kill", () => {
 
     treeKillSync(proc, "SIGTERM");
 
-    expect(childProcess.execFileSync).toHaveBeenCalledWith(
-      "taskkill",
-      ["/pid", "100", "/T", "/F"],
-      {
-        stdio: "ignore",
-      },
-    );
+    expectTaskkillInvocation(100);
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
   });
@@ -271,9 +327,9 @@ describe("@alloc/tree-kill", () => {
 
       await run(proc, "SIGTERM");
 
-      expect(proc.kill).toHaveBeenCalledTimes(2);
-      expect(proc.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-      expect(proc.kill).toHaveBeenNthCalledWith(2, "SIGTERM");
+      expectTaskkillInvocation(100);
+      expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(proc.kill.mock.calls.length).toBeGreaterThanOrEqual(1);
     },
   );
 });

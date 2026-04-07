@@ -6,5 +6,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src", "examples"]
+  "include": ["src", "examples", "test"]
 }

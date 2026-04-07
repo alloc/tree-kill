@@ -1,6 +1,6 @@
-import { defineConfig } from "tsdown"
+import { defineConfig } from "tsdown";
 
-const isDebug = process.env.DEBUG === "true"
+const isDebug = process.env.DEBUG === "true";
 
 export default defineConfig({
   entry: ["./src/index.ts"],
@@ -12,4 +12,4 @@ export default defineConfig({
   dts: {
     tsgo: true,
   },
-})
+});

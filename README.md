@@ -8,7 +8,8 @@ Linux, and Windows.
 It is a rewrite of the original
 [`tree-kill`](https://www.npmjs.com/package/tree-kill) package that preserves
 the same OS-specific traversal strategy but changes the public API to a
-promise-based `ProcessLike` interface instead of a raw `pid` plus callback.
+`ProcessLike` interface with separate async and sync entrypoints instead of a
+raw `pid` plus callback.
 
 ## Installation
 
@@ -19,14 +20,34 @@ pnpm add @alloc/tree-kill
 ## Quick Example
 
 ```ts
-import { spawn } from "node:child_process"
-import treeKill from "@alloc/tree-kill"
+import { spawn } from "node:child_process";
+import treeKill from "@alloc/tree-kill";
 
 const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
   stdio: "ignore",
-})
+});
 
-await treeKill(child, "SIGTERM")
+await treeKill(child, "SIGTERM");
+```
+
+## Exit-Time Fallback
+
+Use the synchronous export only in shutdown paths where async work cannot be
+awaited reliably, such as `process.on("exit")`:
+
+```ts
+import { spawn } from "node:child_process";
+import treeKill, { treeKillSync } from "@alloc/tree-kill";
+
+const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+  stdio: "ignore",
+});
+
+await treeKill(child, "SIGTERM");
+
+process.on("exit", () => {
+  treeKillSync(child, "SIGTERM");
+});
 ```
 
 ## Documentation Map

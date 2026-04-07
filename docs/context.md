@@ -7,12 +7,16 @@ This package is a rewrite of the original
 [`tree-kill`](https://www.npmjs.com/package/tree-kill). It keeps the upstream
 platform strategy of using `pgrep` on macOS, `ps` on Linux, and `taskkill` on
 Windows, but its public API is intentionally different: `treeKill(proc,
-signal?)` accepts a `ChildProcess`-like object and returns a `Promise<void>`.
+signal?)` is promise-based for normal application code, and
+`treeKillSync(proc, signal?)` is a separate synchronous fallback for exit-time
+cleanup.
 
 # When to Use
 
 - You already have a `ChildProcess` or equivalent handle and want to terminate
   the whole tree from application code.
+- You need a best-effort synchronous shutdown fallback inside a
+  `process.on("exit")` handler.
 - You want one small helper that works across macOS, Linux, and Windows.
 - You want the root process signaled even when descendant enumeration finds no
   children.
@@ -31,8 +35,10 @@ signal?)` accepts a `ChildProcess`-like object and returns a `Promise<void>`.
   numeric `pid`.
 - `treeKill(proc, signal?)`: the promise-based entrypoint for killing the root
   process and, when possible, its descendants.
+- `treeKillSync(proc, signal?)`: the synchronous entrypoint for shutdown hooks
+  that cannot await asynchronous work.
 - Numeric `pid`: the capability that enables tree traversal. Without it,
-  `treeKill` degrades to a direct `kill()` call on the provided object.
+  both APIs degrade to a direct `kill()` call on the provided object.
 
 # Data Flow / Lifecycle
 
@@ -52,9 +58,11 @@ signal?)` accepts a `ChildProcess`-like object and returns a `Promise<void>`.
 - Kill a spawned child tree with the default signal: `await treeKill(child)`
 - Use a stronger Unix-like signal:
   `await treeKill(child, "SIGKILL")`
+- Add an exit-hook fallback:
+  `process.on("exit", () => treeKillSync(child, "SIGTERM"))`
 - Support a custom process wrapper without a pid:
-  `await treeKill(proc)` and let the wrapper's own `kill()` implementation
-  decide what to do
+  `await treeKill(proc)` or `treeKillSync(proc)` and let the wrapper's own
+  `kill()` implementation decide what to do
 
 # Invariants and Constraints
 
@@ -64,8 +72,10 @@ signal?)` accepts a `ChildProcess`-like object and returns a `Promise<void>`.
   environment.
 - Windows does not preserve POSIX signal semantics because `taskkill /F` is the
   primary kill mechanism.
-- The promise resolves with `void`; success is defined by the absence of a
+- `treeKill()` resolves with `void`; success is defined by the absence of a
   thrown error, not by the boolean returned from `proc.kill()`.
+- `treeKillSync()` returns `void` and follows the same error model without any
+  asynchronous work.
 
 # Error Model
 
